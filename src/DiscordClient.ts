@@ -51,7 +51,7 @@ export class UnknownMessage {
 
 export class DiscordMessage {
   constructor(json: any) {
-    console.log(`(${json.author.username}) ${json.content}`);
+    console.log(`(${json.d.author.username}) ${json.d.content}`);
   }
 }
 
@@ -73,7 +73,7 @@ class DiscordClient {
   connectionStartTime: number;
   seq: number = 0;
   connectionState: number = 0;
-  emitter: EventEmitter = new EventEmitter;
+  emitter: AsyncEventEmitter = new AsyncEventEmitter;
   constructor(private token: string) {}
   disconnect() {
     this.ws.close();
@@ -100,7 +100,7 @@ class DiscordClient {
         this._handleMessage(json);
         break;
       case DiscordPacketsIncoming.Hello:
-        this._handleHello(json.d);
+        this._handleHello(json);
         break;
       case DiscordPacketsIncoming.HeartbeatAck:
         if (this.connectionState != ConnectionState.Unknown3) {
@@ -125,21 +125,21 @@ class DiscordClient {
       compress: this.usesCompression()
     });
   }
-  _handleHello(data: any) {
-    this.heartbeatInterval = data.heartbeat_interval;
+  _handleHello(json: any) {
+    this.heartbeatInterval = json.d.heartbeat_interval;
     const ms = Date.now() - this.connectionStartTime;
-    console.log(`[HELLO] via ${this.getConnectionPath(data)}, heartbeat interval: ${this.heartbeatInterval}, took ${ms}ms`);
+    console.log(`[HELLO] via ${this.getConnectionPath(json.d)}, heartbeat interval: ${this.heartbeatInterval}, took ${ms}ms`);
     setInterval(this.sendHeartbeat.bind(this), this.heartbeatInterval);
     this.sendHeartbeat();
   }
-  _handleMessage(json: {t: any, d: any}) {
+  _handleMessage(json: any) {
     let message = null;
     switch (json.t) {
       case DiscordMessages.Ready:
-        this.emit(DiscordEvent.Connected);
+        this.emit(DiscordEvent.Connected, json);
         break;
       case DiscordMessages.Create:
-        this.emit(DiscordEvent.Chat, json.d);
+        this.emit(DiscordEvent.Chat, json);
         break;
       default:
         this.emit(DiscordEvent.Message, json);
@@ -164,16 +164,19 @@ class DiscordClient {
       self_video: selfVideo
     });
   }
-  sendStatusUpdate(status: string) {
+  // @TODO: Use an activity object interface
+  sendStatusUpdate(gameName: string, gameId?: string, applicationId?: string) {
     this.send(DiscordPacketsOutgoing.Status, {
-        since: null,
-        game: {
-          name: status,
-          type: 0,
-        },
-        status: "online",
-        afk: false
-      });
+      since: null,
+      game: {
+        name: gameName,
+        id: gameId,
+        type: 0,
+        application_id: applicationId
+      },
+      status: "online",
+      afk: false
+    });
   }
   getConnectionPath(data: any) {
     return data._trace ? data._trace.join(" -> ") : "???";
@@ -191,9 +194,8 @@ class DiscordClient {
   emit(event: string, ...args: any[]) {
     this.emitter.emit(event, ...args);
   }
-  api(payload, ...api) {
+  api(payload: any, ...api: string[]) {
     const endpoint = api.join('/');
-    console.log(endpoint);
     new HttpRequest().httpRequest({
       protocol: 'https',
       method: 'POST',
