@@ -1,24 +1,16 @@
 import * as https from "https";
 import * as http from "http";
-import * as util from "util";
 import { StringDecoder} from "string_decoder";
 import * as querystring from "querystring";
-import * as cheerio from "cheerio";
-
 
 export default class HttpRequest {
-
-  $: cheerio;
 
   constructor(public host?: string, public path?: string, public method?: string, public body?: object) {
   }
 
   async perform() {
    try {
-     const result: any = await this.httpRequest({ host: this.host, path: this.path, method: this.method, body: this.body  });
-     const $ = cheerio.load(result.data);
-     this.$ = $;
-     return $;
+     return await this.httpRequest({ host: this.host, path: this.path, method: this.method, body: this.body  });
    } catch(exception) {
      return exception;
    }
@@ -32,10 +24,9 @@ export default class HttpRequest {
     const method   = (options.method || 'GET').toUpperCase();
     const path     = options.path || '/';
     const port     = options.port || (protocol === 'https' ? 443 : 80);
-
-
+    const bufferType   =  options.buffer || 'utf8';
     const _http = protocol === 'https'? https : http;
-
+    const contentType = options.contentType || 'application/json';
     const prom = new Promise((resolve, reject) => {
       const ops = {
         hostname : options.host, // here only the domain name
@@ -47,8 +38,13 @@ export default class HttpRequest {
       ops.headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 6.1; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/40.0.2214.85 Safari/537.36';
       let body = options.body;
       if(body && typeof(body) === 'object') {
-        body = querystring.stringify(body);        
-        //console.log(body);
+        if (method === 'GET') {
+          body = querystring.stringify(body);
+        } else {
+          body = JSON.stringify(body);
+          ops.headers['Content-Type'] = 'application/json'; // 'application/x-www-form-urlencoded'; // 'application/json; charset=utf-8';
+        }  
+        // console.log(body);
         //if(!utils.hasHeader(ops, 'Content-Type'))
         //ops.headers['Content-Type'] = 'application/x-www-form-urlencoded'; // 'application/json; charset=utf-8';
         //if(!utils.hasHeader(ops, 'Content-Length'))
@@ -56,23 +52,40 @@ export default class HttpRequest {
       }
 
       const req = _http.request(ops, (res)=>{
-        var decoder = new StringDecoder('utf-8');
-        var buffer = '';                         
-        res.on('data', function(data) {
-          buffer += decoder.write(data);
-        });                               
+        let bufferData: any;
+        if (bufferType === 'utf8') {
+          var decoder = new StringDecoder('utf8');
+          bufferData = '';                         
+          res.on('data', function(data) {
+            bufferData += decoder.write(data);
+          });
+        } else {
+          res.setEncoding('binary');
+          bufferData = [];
+          res.on('data', function(data) {
+            bufferData.push(Buffer.from(data, 'binary'));
+          });          
+        }
+        
         res.on('end', function() {
-          buffer += decoder.end();
+          if (bufferType === 'utf8') {
+            bufferData += decoder.end();
+          } else {
+            bufferData = Buffer.concat(bufferData);
+          }
+
+           console.log(bufferData);
 
           if(/^(2)/i.test(res.statusCode.toString()))  {
-            resolve({statusCode : res.statusCode , data : buffer })
+            resolve({contentType: res.headers['content-type'], statusCode : res.statusCode , data : bufferData })
           } else {                                                                                                                                                                                                                                                                                                             
-            reject({statusCode : res.statusCode , error : buffer })
+            reject({statusCode : res.statusCode , error : bufferData })
           }
         });
         });
         
         req.on('error', (err)=>{
+         // console.log(err);
           reject({statusCode : 0, error : err});
         })
 
